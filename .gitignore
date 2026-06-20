@@ -1,11 +1,17 @@
 # Dependencies and builds
 node_modules/
 dist/
+build/
+.next/
 .vercel/
+coverage/
 *.tsbuildinfo
 
 # Secrets and local configuration
 .env
+.env.local
+.env.production
+.env.development
 .env.*
 !.env.example
 
@@ -22,6 +28,7 @@ temp/
 .DS_Store
 .vite/
 .cache/
+.parcel-cache/
 .idea/
 .vscode/
 

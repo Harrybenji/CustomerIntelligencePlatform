@@ -1,5 +1,7 @@
 import type { ButtonHTMLAttributes, PropsWithChildren } from "react";
-import type { Priority, Status } from "../types/dashboard";
+
+type Status = "good" | "warning" | "danger" | "neutral";
+type Priority = "High" | "Medium" | "Low";
 
 const statusStyles: Record<Status, string> = {
   good: "border-emerald-400/25 bg-emerald-400/10 text-emerald-200",
