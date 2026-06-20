@@ -169,7 +169,7 @@ export async function loadCloudState() {
 }
 
 async function saveDataset(dataset: JsonRecord) {
-  const { error } = await supabase.rpc("import_dataset_snapshot", {
+  const { error } = await supabase.rpc("import_dataset_snapshot_secure", {
     p_dataset: dataset,
     p_replace_dataset_id: dataset.id,
   });
@@ -178,7 +178,7 @@ async function saveDataset(dataset: JsonRecord) {
 }
 
 async function deleteDataset(id: string, confirmation: string | null) {
-  const { error } = await supabase.rpc("delete_dataset_snapshot", {
+  const { error } = await supabase.rpc("delete_dataset_snapshot_secure", {
     p_dataset_id: id,
     p_confirmation: confirmation,
   });
@@ -205,7 +205,7 @@ async function saveGoal(id: string, goal: JsonRecord) {
 }
 
 async function saveCampaign(campaign: JsonRecord) {
-  const { error } = await supabase.rpc("create_campaign_with_targets", { p_campaign: campaign });
+  const { error } = await supabase.rpc("create_campaign_with_targets_secure", { p_campaign: campaign });
   throwIfError(error);
   return loadCloudState();
 }

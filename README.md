@@ -41,6 +41,18 @@ Supabase is the source of truth. Uploaded customer records, historical snapshots
    npm run dev
    ```
 
+## User approval and super admin
+
+Apply `supabase/migrations/202606210001_user_access_approval.sql` after the base migration. It adds a protected profile table, account approval workflow, approval-aware RLS policies, and super-admin management functions.
+
+- If Auth users already exist, the oldest account becomes the approved super admin.
+- If no Auth users exist, the first account created after the migration becomes the approved super admin.
+- Every later account starts as `pending` and cannot load or modify platform data.
+- The shield button in the lower-right corner opens the super-admin panel for approving, rejecting, or elevating accounts.
+- A super admin cannot remove their own access or super-admin role.
+
+Roles and approval status live in the database and cannot be changed through editable user metadata or browser state.
+
 ## Database security
 
 The migration enables Row Level Security on every application table. Anonymous users have no table access. Signed-in users can only read and write rows where `owner_id` matches their Supabase user id. Imports, campaign creation, campaign measurement, and permanent deletion run in database transactions.
