@@ -108,35 +108,49 @@ const { data: auth, error: authError } = await supabase.auth.signInWithPassword(
 });
 if (authError || !auth.user) throw authError ?? new Error("Authentication failed");
 
-for (const dataset of store.datasets ?? []) {
-  const { error } = await supabase.rpc("import_dataset_snapshot_secure", {
-    p_dataset: dataset,
-    p_replace_dataset_id: dataset.id,
-  });
-  if (error) throw new Error(`Dataset ${dataset.id} failed: ${error.message}`);
-  console.log(`Imported dataset ${dataset.id} (${dataset.customers?.length ?? 0} records)`);
-}
+const campaignsOnly = process.env.MIGRATION_CAMPAIGNS_ONLY === "1";
 
-for (const goal of store.goals ?? []) {
-  const month = Number(goal.targetMonth ?? goal.month);
-  const year = Number(goal.targetYear ?? goal.year);
-  const id = goal.id ?? `${year}-${String(month).padStart(2, "0")}`;
-  const { error } = await supabase.from("goals").upsert({
-    owner_id: auth.user.id,
-    id,
-    month,
-    year,
-    target_orders: goal.targetOrders ?? null,
-    target_frequency: goal.targetFrequency ?? null,
-    required_active_customers: goal.requiredActiveCustomers ?? null,
-  }, { onConflict: "owner_id,id" });
-  if (error) throw new Error(`Goal ${id} failed: ${error.message}`);
+if (!campaignsOnly) {
+  for (const dataset of store.datasets ?? []) {
+    const { error } = await supabase.rpc("import_dataset_snapshot_secure", {
+      p_dataset: dataset,
+      p_replace_dataset_id: dataset.id,
+    });
+    if (error) throw new Error(`Dataset ${dataset.id} failed: ${error.message}`);
+    console.log(`Imported dataset ${dataset.id} (${dataset.customers?.length ?? 0} records)`);
+  }
+
+  for (const goal of store.goals ?? []) {
+    const month = Number(goal.targetMonth ?? goal.month);
+    const year = Number(goal.targetYear ?? goal.year);
+    const id = goal.id ?? `${year}-${String(month).padStart(2, "0")}`;
+    const { error } = await supabase.from("goals").upsert({
+      owner_id: auth.user.id,
+      id,
+      month,
+      year,
+      target_orders: goal.targetOrders ?? null,
+      target_frequency: goal.targetFrequency ?? null,
+      required_active_customers: goal.requiredActiveCustomers ?? null,
+    }, { onConflict: "owner_id,id" });
+    if (error) throw new Error(`Goal ${id} failed: ${error.message}`);
+  }
 }
 
 for (const campaign of store.campaigns ?? []) {
-  const { error } = await supabase.rpc("create_campaign_with_targets_secure", { p_campaign: campaign });
+  const normalizedCampaign = {
+    ...campaign,
+    targetCustomers: (campaign.targetCustomers ?? []).map((target) => ({
+      ...target,
+      customerId: customerIdentity(target),
+    })),
+  };
+  const { error } = await supabase.rpc("create_campaign_with_targets_secure", { p_campaign: normalizedCampaign });
   if (error && error.code !== "23505") throw new Error(`Campaign ${campaign.id} failed: ${error.message}`);
+  console.log(`Imported campaign ${campaign.id} (${normalizedCampaign.targetCustomers.length} frozen targets)`);
 }
 
 await supabase.auth.signOut();
-console.log(`Migration complete: ${summary.datasets} datasets, ${summary.customerRecords} unique customer records (${summary.mergedDuplicateRows} duplicate rows merged), ${summary.goals} goals, and ${summary.campaigns} campaigns.`);
+console.log(campaignsOnly
+  ? `Campaign migration complete: ${summary.campaigns} campaigns.`
+  : `Migration complete: ${summary.datasets} datasets, ${summary.customerRecords} unique customer records (${summary.mergedDuplicateRows} duplicate rows merged), ${summary.goals} goals, and ${summary.campaigns} campaigns.`);
