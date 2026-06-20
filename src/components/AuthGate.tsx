@@ -114,6 +114,22 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   const signOut = () => void supabase.auth.signOut();
 
+  const resendConfirmation = async () => {
+    if (!email.trim()) {
+      setMessage("Enter your email address first.");
+      return;
+    }
+    setSubmitting(true);
+    setMessage("");
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email: email.trim(),
+      options: { emailRedirectTo: window.location.origin },
+    });
+    setMessage(error ? error.message : "A new confirmation email has been sent.");
+    setSubmitting(false);
+  };
+
   if (!isSupabaseConfigured) {
     return (
       <main className="grid min-h-screen place-items-center bg-zinc-950 p-4">
@@ -156,6 +172,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
             <Button className="w-full border-yellow-300 bg-yellow-300 font-semibold text-zinc-950 hover:bg-yellow-200 hover:text-zinc-950" disabled={submitting} type="submit">{submitting ? "Please wait..." : creatingAccount ? "Submit access request" : "Sign in"}</Button>
           </form>
           <button className="mt-4 w-full text-sm font-semibold text-yellow-200 hover:text-yellow-100" onClick={() => { setCreatingAccount((value) => !value); setMessage(""); }} type="button">{creatingAccount ? "Already approved? Sign in" : "Need access? Create an account"}</button>
+          {!creatingAccount ? <button className="mt-3 w-full text-sm text-zinc-300 hover:text-zinc-50" disabled={submitting} onClick={() => void resendConfirmation()} type="button">Resend confirmation email</button> : null}
         </Card>
       </main>
     );
