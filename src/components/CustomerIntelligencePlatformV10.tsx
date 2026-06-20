@@ -82,6 +82,7 @@ type BackendState = {
 
 type DatasetSaveResult = {
   datasetId: string;
+  recordCount: number;
 };
 
 type CampaignType = "SMS" | "Push Notification" | "WhatsApp" | "Email" | "Manual Outreach";
@@ -721,8 +722,11 @@ export function CustomerIntelligencePlatform() {
           setTargetOrders(goal?.targetOrders ?? null);
           setTargetFrequency(goal?.targetFrequency ?? null);
         }
-      } catch {
-        if (active) setBackendError("Cloud storage could not be loaded. Check the Supabase connection and database migration.");
+      } catch (error) {
+        if (active) {
+          const message = error instanceof Error ? error.message : "Unknown Supabase error";
+          setBackendError(`Cloud storage could not be loaded: ${message}`);
+        }
       } finally {
         if (active) setLoadingData(false);
       }
@@ -1234,7 +1238,7 @@ export function CustomerIntelligencePlatform() {
       setSelectedId(savedDataset.id);
       setView("overview");
       const duplicateCount = previewRows.length - savedDataset.customers.length;
-      const confirmation = `${datasetLabel(savedDataset)} saved permanently with ${formatNumber(savedDataset.totalRecords)} customer records${duplicateCount ? `; ${formatNumber(duplicateCount)} duplicate rows were merged` : ""}.`;
+      const confirmation = `${datasetLabel(savedDataset)} verified in Supabase with ${formatNumber(result.recordCount)} customer records${duplicateCount ? `; ${formatNumber(duplicateCount)} duplicate rows were merged` : ""}.`;
       setUploadMessage(confirmation);
       setSaveConfirmation(confirmation);
       setReplaceDataset(null);

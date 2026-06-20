@@ -169,12 +169,31 @@ export async function loadCloudState() {
 }
 
 async function saveDataset(dataset: JsonRecord) {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const ownerId = sessionData.session?.user.id;
+  if (!ownerId) throw new Error("Your session expired. Sign in again before importing.");
   const { data, error } = await supabase.rpc("import_dataset_snapshot_secure", {
     p_dataset: dataset,
     p_replace_dataset_id: dataset.id,
   });
   throwIfError(error);
-  return { datasetId: String(data ?? dataset.id) };
+  const datasetId = String(data ?? dataset.id);
+  const { data: savedDataset, error: verificationError } = await supabase
+    .from("datasets")
+    .select("id,total_records")
+    .eq("owner_id", ownerId)
+    .eq("id", datasetId)
+    .maybeSingle();
+  throwIfError(verificationError);
+  if (!savedDataset) {
+    throw new Error("Supabase did not return the saved dataset. Check that this account is approved and retry.");
+  }
+  const expectedRecords = Array.isArray(dataset.customers) ? dataset.customers.length : 0;
+  const recordCount = Number(savedDataset.total_records ?? 0);
+  if (recordCount !== expectedRecords) {
+    throw new Error(`Supabase saved ${recordCount} of ${expectedRecords} customer records. The import was not accepted as complete.`);
+  }
+  return { datasetId, recordCount };
 }
 
 async function deleteDataset(id: string, confirmation: string | null) {
