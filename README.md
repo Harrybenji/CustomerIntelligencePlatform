@@ -50,6 +50,7 @@ Apply `supabase/migrations/202606210001_user_access_approval.sql` after the base
 - Every later account starts as `pending` and cannot load or modify platform data.
 - The shield button in the lower-right corner opens the super-admin panel for approving, rejecting, or elevating accounts.
 - A super admin cannot remove their own access or super-admin role.
+- Apply `supabase/migrations/202606210002_super_admin_data_visibility.sql` so super admins can read data imported by approved users while ordinary users remain isolated to their own records.
 
 Roles and approval status live in the database and cannot be changed through editable user metadata or browser state.
 
