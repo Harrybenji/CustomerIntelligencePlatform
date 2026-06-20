@@ -80,6 +80,10 @@ type BackendState = {
   campaigns: Campaign[];
 };
 
+type DatasetSaveResult = {
+  datasetId: string;
+};
+
 type CampaignType = "SMS" | "Push Notification" | "WhatsApp" | "Email" | "Manual Outreach";
 
 type CampaignTargetCustomer = {
@@ -327,6 +331,63 @@ const summarizeDataset = (
     status: dataset.status ?? (complete ? "complete" : "month-to-date"),
   };
 };
+
+function mergeCustomerRecords(records: CustomerRecord[]) {
+  const merged = new Map<string, CustomerRecord>();
+  records.forEach((record) => {
+    const id = getCustomerId(record);
+    const existing = merged.get(id);
+    if (!existing) {
+      merged.set(id, { ...record });
+      return;
+    }
+    const existingDate = existing.lastOrderDate ? new Date(existing.lastOrderDate).getTime() : 0;
+    const incomingDate = record.lastOrderDate ? new Date(record.lastOrderDate).getTime() : 0;
+    merged.set(id, {
+      ...existing,
+      customerName: record.customerName || existing.customerName,
+      phoneNumber: record.phoneNumber || existing.phoneNumber,
+      email: record.email || existing.email,
+      ordersThisMonth: existing.ordersThisMonth + record.ordersThisMonth,
+      lifetimeOrders: existing.lifetimeOrders + record.lifetimeOrders,
+      totalSpend: existing.totalSpend + record.totalSpend,
+      lastOrderDate: incomingDate > existingDate ? record.lastOrderDate : existing.lastOrderDate,
+    });
+  });
+  return [...merged.values()];
+}
+
+function buildTargetsForDataset(dataset: MonthlyDataset) {
+  const actionTargets: ActionTarget[] = [];
+  const grouped = new Map<string, string[]>();
+  dataset.customers.forEach((customer) => {
+    const customerId = getCustomerId(customer);
+    const target = targetForOrders(customer.ordersThisMonth);
+    actionTargets.push({
+      id: `${dataset.id}:${customerId}`,
+      snapshotId: dataset.id,
+      customerId,
+      currentOrders: customer.ordersThisMonth,
+      ...target,
+      createdAt: dataset.uploadedAt,
+      status: "Pending",
+    });
+    grouped.set(target.targetAction, [...(grouped.get(target.targetAction) ?? []), customerId]);
+  });
+  const campaignTargetLists: CampaignTargetList[] = [...grouped].map(([targetAction, customerIds]) => ({
+    id: `${dataset.id}:${targetAction.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+    snapshotId: dataset.id,
+    month: dataset.month,
+    year: dataset.year,
+    startDate: dataset.startDate,
+    endDate: dataset.endDate,
+    targetAction,
+    totalTargeted: customerIds.length,
+    customerIds,
+    createdAt: dataset.uploadedAt,
+  }));
+  return { actionTargets, campaignTargetLists };
+}
 
 async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
   return cloudRequest<T>(path, options);
@@ -597,6 +658,7 @@ export function CustomerIntelligencePlatform() {
   const [previewRows, setPreviewRows] = useState<CustomerRecord[]>([]);
   const [fileName, setFileName] = useState("");
   const [uploadMessage, setUploadMessage] = useState("");
+  const [saveConfirmation, setSaveConfirmation] = useState("");
   const [replaceDataset, setReplaceDataset] = useState<MonthlyDataset | null>(null);
   const [deleteDatasetTarget, setDeleteDatasetTarget] = useState<MonthlyDataset | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
@@ -1046,16 +1108,16 @@ export function CustomerIntelligencePlatform() {
   );
 
   const validationWarnings = useMemo(() => {
-    const duplicateIds = new Set<string>();
     const seen = new Set<string>();
+    let duplicateRows = 0;
     previewRows.forEach((row) => {
       const id = getCustomerId(row);
-      if (seen.has(id)) duplicateIds.add(id);
+      if (seen.has(id)) duplicateRows += 1;
       seen.add(id);
     });
     return [
       { label: "Missing phone numbers", count: previewRows.filter((row) => !row.phoneNumber).length },
-      { label: "Duplicate customers", count: duplicateIds.size },
+      { label: "Duplicate rows to merge", count: duplicateRows },
       { label: "Invalid dates", count: previewRows.filter((row) => row.lastOrderDate && Number.isNaN(new Date(row.lastOrderDate).getTime())).length },
       { label: "Empty order counts", count: previewRows.filter((row) => row.ordersThisMonth === null || Number.isNaN(row.ordersThisMonth)).length },
       { label: "Invalid numeric values", count: previewRows.filter((row) => row.ordersThisMonth < 0 || row.lifetimeOrders < 0 || row.totalSpend < 0).length },
@@ -1082,6 +1144,7 @@ export function CustomerIntelligencePlatform() {
   const handleFile = async (file: File) => {
     setFileName(file.name);
     setUploadMessage("");
+    setSaveConfirmation("");
     try {
       if (!/\.(csv|xlsx)$/i.test(file.name)) throw new Error("Unsupported file type");
       if (file.size > 25 * 1024 * 1024) throw new Error("File exceeds 25 MB");
@@ -1105,8 +1168,17 @@ export function CustomerIntelligencePlatform() {
   };
 
   const commitImport = async (mode: "prompt" | "snapshot" | "replace" = "prompt") => {
-    if (!allColumnsFound || previewRows.length === 0) return;
-    const blockingWarnings = validationWarnings.filter((warning) => warning.label !== "Missing phone numbers" && warning.count > 0);
+    if (!allColumnsFound) {
+      setUploadMessage("Add all required columns before importing this file.");
+      return;
+    }
+    if (previewRows.length === 0) {
+      setUploadMessage("This file does not contain any customer rows to import.");
+      return;
+    }
+    const blockingWarnings = validationWarnings.filter(
+      (warning) => !["Missing phone numbers", "Duplicate rows to merge"].includes(warning.label) && warning.count > 0,
+    );
     if (blockingWarnings.length) {
       setUploadMessage(`Fix validation issues before importing: ${blockingWarnings.map((warning) => warning.label).join(", ")}.`);
       return;
@@ -1125,7 +1197,7 @@ export function CustomerIntelligencePlatform() {
       dataThroughDay: Math.min(dataThroughDay, monthDays),
       fileName: fileName || "Uploaded customer file",
       uploadedAt: nowIso,
-      customers: previewRows,
+      customers: mergeCustomerRecords(previewRows),
     });
     if (existingUploadMonth && mode === "prompt") {
       setReplaceDataset(existingUploadMonth);
@@ -1133,18 +1205,43 @@ export function CustomerIntelligencePlatform() {
     }
     setSavingData(true);
     setBackendError("");
+    setSaveConfirmation("");
+    setUploadMessage("Saving customer records to Supabase...");
     try {
-      const state = await apiRequest<BackendState>(`/datasets/${encodeURIComponent(dataset.id)}`, {
+      const result = await apiRequest<DatasetSaveResult>(`/datasets/${encodeURIComponent(dataset.id)}`, {
         method: "PUT",
         body: JSON.stringify(dataset),
       });
-      applyBackendState(state);
-      setSelectedId(dataset.id);
+      const savedDataset = { ...dataset, id: result.datasetId };
+      const nextTargets = buildTargetsForDataset(savedDataset);
+      setDatasets((current) =>
+        [...current.filter((item) => item.id !== savedDataset.id), savedDataset].sort(
+          (a, b) =>
+            a.year - b.year ||
+            a.month - b.month ||
+            new Date(a.endDate).getTime() - new Date(b.endDate).getTime() ||
+            new Date(a.uploadedAt).getTime() - new Date(b.uploadedAt).getTime(),
+        ),
+      );
+      setActionTargets((current) => [
+        ...current.filter((item) => item.snapshotId !== savedDataset.id),
+        ...nextTargets.actionTargets,
+      ]);
+      setCampaignTargetLists((current) => [
+        ...current.filter((item) => item.snapshotId !== savedDataset.id),
+        ...nextTargets.campaignTargetLists,
+      ]);
+      setSelectedId(savedDataset.id);
       setView("overview");
-      setUploadMessage(`${datasetLabel(dataset)} saved permanently and dashboard metrics refreshed.`);
+      const duplicateCount = previewRows.length - savedDataset.customers.length;
+      const confirmation = `${datasetLabel(savedDataset)} saved permanently with ${formatNumber(savedDataset.totalRecords)} customer records${duplicateCount ? `; ${formatNumber(duplicateCount)} duplicate rows were merged` : ""}.`;
+      setUploadMessage(confirmation);
+      setSaveConfirmation(confirmation);
       setReplaceDataset(null);
     } catch (error) {
-      setBackendError(error instanceof Error ? error.message : "The dataset could not be saved to Supabase.");
+      const message = error instanceof Error ? error.message : "The dataset could not be saved to Supabase.";
+      setBackendError(message);
+      setUploadMessage(`Import failed: ${message}`);
     } finally {
       setSavingData(false);
     }
@@ -1461,6 +1558,18 @@ export function CustomerIntelligencePlatform() {
             <div>
               <p className="font-semibold">Backend storage issue</p>
               <p className="mt-1 text-sm text-red-100/80">{backendError}</p>
+            </div>
+          </div>
+        </Card>
+      ) : null}
+
+      {saveConfirmation ? (
+        <Card className="border-emerald-400/30 bg-emerald-950/30 p-5">
+          <div className="flex items-start gap-3 text-emerald-100">
+            <Check className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <p className="font-semibold">Import saved</p>
+              <p className="mt-1 text-sm text-emerald-100/80">{saveConfirmation}</p>
             </div>
           </div>
         </Card>

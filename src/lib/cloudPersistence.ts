@@ -169,12 +169,12 @@ export async function loadCloudState() {
 }
 
 async function saveDataset(dataset: JsonRecord) {
-  const { error } = await supabase.rpc("import_dataset_snapshot_secure", {
+  const { data, error } = await supabase.rpc("import_dataset_snapshot_secure", {
     p_dataset: dataset,
     p_replace_dataset_id: dataset.id,
   });
   throwIfError(error);
-  return loadCloudState();
+  return { datasetId: String(data ?? dataset.id) };
 }
 
 async function deleteDataset(id: string, confirmation: string | null) {
