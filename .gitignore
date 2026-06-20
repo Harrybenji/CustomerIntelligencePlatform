@@ -1,0 +1,30 @@
+# Dependencies and builds
+node_modules/
+dist/
+.vercel/
+*.tsbuildinfo
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Legacy local persistence and temporary imports
+data/
+*.sqlite
+*.sqlite-*
+uploads/
+tmp/
+temp/
+
+# Logs, caches, and editor files
+*.log
+.DS_Store
+.vite/
+.cache/
+.idea/
+.vscode/
+
+# Local design-review screenshots
+/*-v*.png
+/contrast-*.png
