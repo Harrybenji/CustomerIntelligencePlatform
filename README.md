@@ -68,11 +68,15 @@ SUPABASE_URL="https://your-project.supabase.co" \
 SUPABASE_ANON_KEY="your-publishable-or-anon-key" \
 SUPABASE_EMAIL="admin@example.com" \
 SUPABASE_PASSWORD="your-password" \
-LEGACY_STORE_PATH="./data/customer-intelligence-store.json" \
+LEGACY_STORE_PATH="./data/customer-intelligence.sqlite" \
 npm run migrate:legacy
 ```
 
-The script imports each saved snapshot through the same transactional database function used by the app, then migrates goals and frozen campaigns. Re-running it is safe for snapshots with the same ids.
+The script imports each saved snapshot through the same transactional database function used by the app, then migrates goals and frozen campaigns. It accepts the legacy SQLite database or JSON store. Re-running it is safe for snapshots with the same ids. Validate the source without connecting first:
+
+```bash
+MIGRATION_DRY_RUN=1 npm run migrate:legacy
+```
 
 ## GitHub
 

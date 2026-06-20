@@ -1,13 +1,47 @@
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { extname } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 
-const required = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_EMAIL", "SUPABASE_PASSWORD"];
-for (const name of required) {
-  if (!process.env[name]) throw new Error(`${name} is required`);
+function sqlitePayloads(file, table, orderBy = "") {
+  const sql = `SELECT payload FROM ${table}${orderBy ? ` ORDER BY ${orderBy}` : ""};`;
+  const output = execFileSync("sqlite3", ["-batch", "-noheader", file, sql], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  }).trim();
+  return output ? output.split("\n").map((payload) => JSON.parse(payload)) : [];
 }
 
-const file = process.env.LEGACY_STORE_PATH ?? "./data/customer-intelligence-store.json";
-const store = JSON.parse(await readFile(file, "utf8"));
+async function loadLegacyStore(file) {
+  if ([".sqlite", ".db"].includes(extname(file).toLowerCase())) {
+    return {
+      datasets: sqlitePayloads(file, "datasets", "year, month, endDate, uploadedAt"),
+      goals: sqlitePayloads(file, "goals", "year, month, updatedAt"),
+      campaigns: sqlitePayloads(file, "campaigns", "createdAt"),
+    };
+  }
+  return JSON.parse(await readFile(file, "utf8"));
+}
+
+const file = process.env.LEGACY_STORE_PATH ?? "./data/customer-intelligence.sqlite";
+const store = await loadLegacyStore(file);
+const summary = {
+  datasets: (store.datasets ?? []).length,
+  customerRecords: (store.datasets ?? []).reduce((sum, dataset) => sum + (dataset.customers?.length ?? 0), 0),
+  goals: (store.goals ?? []).length,
+  campaigns: (store.campaigns ?? []).length,
+};
+
+if (process.env.MIGRATION_DRY_RUN === "1") {
+  console.log(JSON.stringify({ source: file, ...summary }, null, 2));
+  process.exit(0);
+}
+
+for (const name of ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_EMAIL", "SUPABASE_PASSWORD"]) {
+  if (!process.env[name]) throw new Error(`${name} is required`);
+}
+if (!summary.datasets || !summary.customerRecords) throw new Error("Refusing to migrate an empty legacy data source");
+
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 const { data: auth, error: authError } = await supabase.auth.signInWithPassword({
   email: process.env.SUPABASE_EMAIL,
@@ -16,12 +50,12 @@ const { data: auth, error: authError } = await supabase.auth.signInWithPassword(
 if (authError || !auth.user) throw authError ?? new Error("Authentication failed");
 
 for (const dataset of store.datasets ?? []) {
-  const { error } = await supabase.rpc("import_dataset_snapshot", {
+  const { error } = await supabase.rpc("import_dataset_snapshot_secure", {
     p_dataset: dataset,
     p_replace_dataset_id: dataset.id,
   });
   if (error) throw new Error(`Dataset ${dataset.id} failed: ${error.message}`);
-  console.log(`Imported dataset ${dataset.id}`);
+  console.log(`Imported dataset ${dataset.id} (${dataset.customers?.length ?? 0} records)`);
 }
 
 for (const goal of store.goals ?? []) {
@@ -41,9 +75,9 @@ for (const goal of store.goals ?? []) {
 }
 
 for (const campaign of store.campaigns ?? []) {
-  const { error } = await supabase.rpc("create_campaign_with_targets", { p_campaign: campaign });
+  const { error } = await supabase.rpc("create_campaign_with_targets_secure", { p_campaign: campaign });
   if (error && error.code !== "23505") throw new Error(`Campaign ${campaign.id} failed: ${error.message}`);
 }
 
 await supabase.auth.signOut();
-console.log(`Migration complete: ${(store.datasets ?? []).length} datasets and ${(store.campaigns ?? []).length} campaigns.`);
+console.log(`Migration complete: ${summary.datasets} datasets, ${summary.customerRecords} customer records, ${summary.goals} goals, and ${summary.campaigns} campaigns.`);
