@@ -1,6 +1,6 @@
 import { type FormEvent, type ReactNode, useCallback, useEffect, useState } from "react";
 import { Clock3, Cloud, LoaderCircle, LockKeyhole, LogOut, Mail, RefreshCw, ShieldCheck, UserX } from "lucide-react";
-import type { Session } from "@supabase/supabase-js";
+import type { EmailOtpType, Session } from "@supabase/supabase-js";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
 import { Button, Card } from "./ui";
 import { UserAccessPanel } from "./UserAccessPanel";
@@ -49,15 +49,41 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!isSupabaseConfigured) return;
-    void supabase.auth.getSession().then(({ data }: { data: { session: Session | null } }) => {
-      setSession(data.session);
-      setLoading(false);
-    });
+    let active = true;
     const { data } = supabase.auth.onAuthStateChange((_event: string, nextSession: Session | null) => {
+      if (!active) return;
       setSession(nextSession);
       setLoading(false);
     });
-    return () => data.subscription.unsubscribe();
+
+    const initializeAuth = async () => {
+      const url = new URL(window.location.href);
+      const tokenHash = url.searchParams.get("token_hash");
+      const requestedType = url.searchParams.get("type");
+      const otpTypes: EmailOtpType[] = ["email", "signup", "invite", "magiclink", "recovery", "email_change"];
+
+      if (tokenHash && requestedType && otpTypes.includes(requestedType as EmailOtpType)) {
+        const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: requestedType as EmailOtpType });
+        if (active) setMessage(error ? error.message : "Email confirmed. Your access request is ready for review.");
+        if (!error) window.history.replaceState({}, document.title, `${url.pathname}${url.hash}`);
+      }
+
+      const hashParams = new URLSearchParams(window.location.hash.slice(1));
+      const callbackError = hashParams.get("error_description") ?? url.searchParams.get("error_description");
+      if (active && callbackError) setMessage(callbackError.replace(/\+/g, " "));
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (active) {
+        setSession(sessionData.session);
+        setLoading(false);
+      }
+    };
+
+    void initializeAuth();
+    return () => {
+      active = false;
+      data.subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -75,7 +101,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
     setSubmitting(true);
     setMessage("");
     const result = creatingAccount
-      ? await supabase.auth.signUp({ email, password })
+      ? await supabase.auth.signUp({
+          email,
+          password,
+          options: { emailRedirectTo: window.location.origin },
+        })
       : await supabase.auth.signInWithPassword({ email, password });
     if (result.error) setMessage(result.error.message);
     else if (creatingAccount && !result.data.session) setMessage("Check your email to confirm the account. Your access request will then await approval.");
