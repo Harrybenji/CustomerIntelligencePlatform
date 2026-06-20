@@ -23,13 +23,72 @@ async function loadLegacyStore(file) {
   return JSON.parse(await readFile(file, "utf8"));
 }
 
+const normalize = (value) => String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+
+function customerIdentity(customer) {
+  if (customer.email) return `email:${normalize(customer.email)}`;
+  if (customer.phoneNumber) return `phone:${normalize(customer.phoneNumber)}`;
+  return `name:${normalize(customer.customerName)}`;
+}
+
+function mergeDuplicateCustomers(customers = []) {
+  const merged = new Map();
+  for (const customer of customers) {
+    const identity = customerIdentity(customer);
+    const existing = merged.get(identity);
+    if (!existing) {
+      merged.set(identity, { ...customer });
+      continue;
+    }
+    merged.set(identity, {
+      ...existing,
+      customerName: existing.customerName || customer.customerName || "",
+      phoneNumber: existing.phoneNumber || customer.phoneNumber || "",
+      email: existing.email || customer.email || "",
+      ordersThisMonth: Number(existing.ordersThisMonth || 0) + Number(customer.ordersThisMonth || 0),
+      lifetimeOrders: Number(existing.lifetimeOrders || 0) + Number(customer.lifetimeOrders || 0),
+      totalSpend: Number(existing.totalSpend || 0) + Number(customer.totalSpend || 0),
+      lastOrderDate: [existing.lastOrderDate, customer.lastOrderDate].filter(Boolean).sort().at(-1) ?? "",
+      trendCategory: existing.trendCategory || customer.trendCategory,
+      recommendedAction: existing.recommendedAction || customer.recommendedAction,
+    });
+  }
+  return [...merged.values()];
+}
+
+function numericTotals(datasets) {
+  return (datasets ?? []).reduce((totals, dataset) => {
+    for (const customer of dataset.customers ?? []) {
+      totals.ordersThisMonth += Number(customer.ordersThisMonth || 0);
+      totals.lifetimeOrders += Number(customer.lifetimeOrders || 0);
+      totals.totalSpend += Number(customer.totalSpend || 0);
+    }
+    return totals;
+  }, { ordersThisMonth: 0, lifetimeOrders: 0, totalSpend: 0 });
+}
+
 const file = process.env.LEGACY_STORE_PATH ?? "./data/customer-intelligence.sqlite";
 const store = await loadLegacyStore(file);
+const sourceCustomerRecords = (store.datasets ?? []).reduce((sum, dataset) => sum + (dataset.customers?.length ?? 0), 0);
+const sourceTotals = numericTotals(store.datasets);
+store.datasets = (store.datasets ?? []).map((dataset) => ({
+  ...dataset,
+  customers: mergeDuplicateCustomers(dataset.customers),
+}));
+const mergedTotals = numericTotals(store.datasets);
+for (const field of Object.keys(sourceTotals)) {
+  if (Math.abs(sourceTotals[field] - mergedTotals[field]) > 0.01) {
+    throw new Error(`Duplicate merge changed the ${field} total; migration stopped`);
+  }
+}
 const summary = {
   datasets: (store.datasets ?? []).length,
+  sourceCustomerRecords,
   customerRecords: (store.datasets ?? []).reduce((sum, dataset) => sum + (dataset.customers?.length ?? 0), 0),
+  mergedDuplicateRows: sourceCustomerRecords - (store.datasets ?? []).reduce((sum, dataset) => sum + (dataset.customers?.length ?? 0), 0),
   goals: (store.goals ?? []).length,
   campaigns: (store.campaigns ?? []).length,
+  totalsPreserved: true,
 };
 
 if (process.env.MIGRATION_DRY_RUN === "1") {
@@ -80,4 +139,4 @@ for (const campaign of store.campaigns ?? []) {
 }
 
 await supabase.auth.signOut();
-console.log(`Migration complete: ${summary.datasets} datasets, ${summary.customerRecords} customer records, ${summary.goals} goals, and ${summary.campaigns} campaigns.`);
+console.log(`Migration complete: ${summary.datasets} datasets, ${summary.customerRecords} unique customer records (${summary.mergedDuplicateRows} duplicate rows merged), ${summary.goals} goals, and ${summary.campaigns} campaigns.`);
