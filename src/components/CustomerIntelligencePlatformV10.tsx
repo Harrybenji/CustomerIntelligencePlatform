@@ -1120,11 +1120,11 @@ export function CustomerIntelligencePlatform() {
       seen.add(id);
     });
     return [
-      { label: "Missing phone numbers", count: previewRows.filter((row) => !row.phoneNumber).length },
-      { label: "Duplicate rows to merge", count: duplicateRows },
-      { label: "Invalid dates", count: previewRows.filter((row) => row.lastOrderDate && Number.isNaN(new Date(row.lastOrderDate).getTime())).length },
-      { label: "Empty order counts", count: previewRows.filter((row) => row.ordersThisMonth === null || Number.isNaN(row.ordersThisMonth)).length },
-      { label: "Invalid numeric values", count: previewRows.filter((row) => row.ordersThisMonth < 0 || row.lifetimeOrders < 0 || row.totalSpend < 0).length },
+      { label: "Missing phone numbers", count: previewRows.filter((row) => !row.phoneNumber).length, blocking: false },
+      { label: "Duplicate rows to merge", count: duplicateRows, blocking: false },
+      { label: "Invalid dates", count: previewRows.filter((row) => row.lastOrderDate && Number.isNaN(new Date(row.lastOrderDate).getTime())).length, blocking: true },
+      { label: "Empty order counts", count: previewRows.filter((row) => row.ordersThisMonth === null || Number.isNaN(row.ordersThisMonth)).length, blocking: true },
+      { label: "Invalid numeric values", count: previewRows.filter((row) => row.ordersThisMonth < 0 || row.lifetimeOrders < 0 || row.totalSpend < 0).length, blocking: true },
     ];
   }, [previewRows]);
 
@@ -1180,9 +1180,7 @@ export function CustomerIntelligencePlatform() {
       setUploadMessage("This file does not contain any customer rows to import.");
       return;
     }
-    const blockingWarnings = validationWarnings.filter(
-      (warning) => !["Missing phone numbers", "Duplicate rows to merge"].includes(warning.label) && warning.count > 0,
-    );
+    const blockingWarnings = validationWarnings.filter((warning) => warning.blocking && warning.count > 0);
     if (blockingWarnings.length) {
       setUploadMessage(`Fix validation issues before importing: ${blockingWarnings.map((warning) => warning.label).join(", ")}.`);
       return;
