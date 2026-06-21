@@ -57,20 +57,8 @@ function mapCustomerRecord(row: JsonRecord) {
   };
 }
 
-export async function loadCloudState() {
-  const [datasetRows, recordRows, goalRows, campaignRows, targetRows, exportRows] = await Promise.all([
-    readAll("datasets", (query) => query.order("year").order("month").order("end_date").order("uploaded_at")),
-    readAll("customer_records", (query) => query.order("created_at")),
-    readAll("goals", (query) => query.order("year").order("month")),
-    readAll("campaigns", (query) => query.order("created_at")),
-    readAll("campaign_targets", (query) => query.order("created_at")),
-    readAll("export_history", (query) => query.order("exported_at")),
-  ]);
-
-  const recordsByDataset = new Map<string, JsonRecord[]>();
-  for (const row of recordRows) recordsByDataset.set(row.dataset_id, [...(recordsByDataset.get(row.dataset_id) ?? []), row]);
-
-  const datasets = datasetRows.map((row) => ({
+function mapDatasetRow(row: JsonRecord, recordRows: JsonRecord[]) {
+  return {
     id: row.id,
     month: row.month,
     year: row.year,
@@ -85,8 +73,27 @@ export async function loadCloudState() {
     frequency: Number(row.frequency ?? 0),
     status: row.status,
     isLatestSnapshot: row.is_latest,
-    customers: (recordsByDataset.get(row.id) ?? []).map(mapCustomerRecord),
-  }));
+    customers: recordRows.map(mapCustomerRecord),
+  };
+}
+
+export async function loadCloudState() {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const ownerId = sessionData.session?.user.id;
+  if (!ownerId) throw new Error("Your session expired. Sign in again to load customer data.");
+  const [datasetRows, recordRows, goalRows, campaignRows, targetRows, exportRows] = await Promise.all([
+    readAll("datasets", (query) => query.eq("owner_id", ownerId).order("year").order("month").order("end_date").order("uploaded_at")),
+    readAll("customer_records", (query) => query.eq("owner_id", ownerId).order("created_at")),
+    readAll("goals", (query) => query.eq("owner_id", ownerId).order("year").order("month")),
+    readAll("campaigns", (query) => query.eq("owner_id", ownerId).order("created_at")),
+    readAll("campaign_targets", (query) => query.eq("owner_id", ownerId).order("created_at")),
+    readAll("export_history", (query) => query.eq("owner_id", ownerId).order("exported_at")),
+  ]);
+
+  const recordsByDataset = new Map<string, JsonRecord[]>();
+  for (const row of recordRows) recordsByDataset.set(row.dataset_id, [...(recordsByDataset.get(row.dataset_id) ?? []), row]);
+
+  const datasets = datasetRows.map((row) => mapDatasetRow(row, recordsByDataset.get(row.id) ?? []));
 
   const actionTargets: JsonRecord[] = [];
   const campaignTargetLists: JsonRecord[] = [];
@@ -180,7 +187,7 @@ async function saveDataset(dataset: JsonRecord) {
   const datasetId = String(data ?? dataset.id);
   const { data: savedDataset, error: verificationError } = await supabase
     .from("datasets")
-    .select("id,total_records")
+    .select("*")
     .eq("owner_id", ownerId)
     .eq("id", datasetId)
     .maybeSingle();
@@ -193,7 +200,13 @@ async function saveDataset(dataset: JsonRecord) {
   if (recordCount !== expectedRecords) {
     throw new Error(`Supabase saved ${recordCount} of ${expectedRecords} customer records. The import was not accepted as complete.`);
   }
-  return { datasetId, recordCount };
+  const savedRecords = await readAll("customer_records", (query) =>
+    query.eq("owner_id", ownerId).eq("dataset_id", datasetId).order("created_at"),
+  );
+  if (savedRecords.length !== recordCount) {
+    throw new Error(`Supabase reports ${recordCount} records but returned ${savedRecords.length}. Refresh your session and retry.`);
+  }
+  return { dataset: mapDatasetRow(savedDataset, savedRecords), recordCount };
 }
 
 async function deleteDataset(id: string, confirmation: string | null) {

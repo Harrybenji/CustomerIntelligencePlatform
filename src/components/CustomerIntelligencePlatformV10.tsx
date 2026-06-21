@@ -81,7 +81,7 @@ type BackendState = {
 };
 
 type DatasetSaveResult = {
-  datasetId: string;
+  dataset: MonthlyDataset;
   recordCount: number;
 };
 
@@ -1216,7 +1216,7 @@ export function CustomerIntelligencePlatform() {
         method: "PUT",
         body: JSON.stringify(dataset),
       });
-      const savedDataset = { ...dataset, id: result.datasetId };
+      const savedDataset = summarizeDataset(result.dataset);
       const nextTargets = buildTargetsForDataset(savedDataset);
       setDatasets((current) =>
         [...current.filter((item) => item.id !== savedDataset.id), savedDataset].sort(
@@ -1715,7 +1715,7 @@ export function CustomerIntelligencePlatform() {
                 <span className="text-xs font-semibold uppercase tracking-[0.14em] text-yellow-200">Dashboard Month</span>
                 <select className="h-12 w-full rounded-xl border border-yellow-300/45 bg-zinc-950 px-3 text-zinc-50 outline-none focus:border-yellow-300" value={selectedDataset?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)}>
                   <option value="">No imported month</option>
-                  {sortedDatasets.map((dataset) => <option key={dataset.id} value={dataset.id}>{monthLabel(dataset)}</option>)}
+                  {sortedDatasets.map((dataset) => <option key={dataset.id} value={dataset.id}>{datasetLabel(dataset)} - {formatNumber(dataset.totalRecords)} records</option>)}
                 </select>
               </label>
               <div className="space-y-2">
